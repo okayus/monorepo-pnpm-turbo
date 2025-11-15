@@ -1,0 +1,16 @@
+{
+  "name": "@okayus/frontend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc ./src/index.ts --outDir ./dist --declaration"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.11.1",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
