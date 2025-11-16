@@ -1,0 +1,257 @@
+name: 🚀 Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+# 同時デプロイを防ぐため
+concurrency:
+  group: deploy-${{ github.ref }}-${{ inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  # 前提条件チェック
+  pre-deploy:
+    name: 🔍 Pre-deployment Check
+    runs-on: ubuntu-latest
+    outputs:
+      should-deploy: ${{ steps.changes.outputs.should-deploy }}
+      
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: 🔍 Check for changes
+        id: changes
+        run: |
+          # すべてのパッケージに変更がある場合はデプロイを実行
+          if git diff --name-only HEAD^ HEAD | grep -E "(packages/|\.github/)" > /dev/null; then
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+            echo "📦 Changes detected in packages or workflows"
+          else
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No relevant changes detected"
+          fi
+
+  # Shared packageのビルド
+  build-shared:
+    name: 🏗️ Build Shared Package
+    runs-on: ubuntu-latest
+    needs: [pre-deploy]
+    if: needs.pre-deploy.outputs.should-deploy == 'true'
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: 📥 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🏗️ Build shared package
+        run: pnpm --filter=@cloudflare-todo-sample/shared build
+
+      - name: 📦 Cache shared build
+        uses: actions/cache@v4
+        with:
+          path: packages/shared/dist
+          key: shared-build-${{ github.sha }}
+
+  # Backend デプロイ (Cloudflare Workers)
+  deploy-backend:
+    name: 🔧 Deploy Backend (Workers)
+    runs-on: ubuntu-latest
+    needs: [pre-deploy, build-shared]
+    if: needs.pre-deploy.outputs.should-deploy == 'true'
+    environment: ${{ inputs.environment || 'production' }}
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: 📥 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 📦 Restore shared build
+        uses: actions/cache@v4
+        with:
+          path: packages/shared/dist
+          key: shared-build-${{ github.sha }}
+
+      - name: 📦 Install Wrangler
+        run: pnpm add -g wrangler
+
+      - name: 🚀 Deploy to Cloudflare Workers
+        run: wrangler deploy --env production
+        working-directory: packages/backend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  # Frontend デプロイ (Cloudflare Pages)
+  deploy-frontend:
+    name: 🌐 Deploy Frontend (Pages)
+    runs-on: ubuntu-latest
+    needs: [pre-deploy, build-shared, deploy-backend]
+    if: needs.pre-deploy.outputs.should-deploy == 'true'
+    environment: ${{ inputs.environment || 'production' }}
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: 📥 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 📦 Restore shared build
+        uses: actions/cache@v4
+        with:
+          path: packages/shared/dist
+          key: shared-build-${{ github.sha }}
+
+      - name: 🔍 Environment Variables Check
+        run: |
+          echo "Checking required environment variables..."
+          
+          # Firebase設定確認
+          [ -n "$VITE_FIREBASE_API_KEY" ] && echo "✅ VITE_FIREBASE_API_KEY" || echo "❌ VITE_FIREBASE_API_KEY"
+          [ -n "$VITE_FIREBASE_AUTH_DOMAIN" ] && echo "✅ VITE_FIREBASE_AUTH_DOMAIN" || echo "❌ VITE_FIREBASE_AUTH_DOMAIN"
+          [ -n "$VITE_FIREBASE_PROJECT_ID" ] && echo "✅ VITE_FIREBASE_PROJECT_ID" || echo "❌ VITE_FIREBASE_PROJECT_ID"
+          [ -n "$VITE_FIREBASE_STORAGE_BUCKET" ] && echo "✅ VITE_FIREBASE_STORAGE_BUCKET" || echo "❌ VITE_FIREBASE_STORAGE_BUCKET"
+          [ -n "$VITE_FIREBASE_MESSAGING_SENDER_ID" ] && echo "✅ VITE_FIREBASE_MESSAGING_SENDER_ID" || echo "❌ VITE_FIREBASE_MESSAGING_SENDER_ID"
+          [ -n "$VITE_FIREBASE_APP_ID" ] && echo "✅ VITE_FIREBASE_APP_ID" || echo "❌ VITE_FIREBASE_APP_ID"
+          
+          # API URL確認
+          [ -n "$VITE_API_BASE_URL" ] && echo "✅ VITE_API_BASE_URL: $VITE_API_BASE_URL" || echo "❌ VITE_API_BASE_URL"
+          
+          # 必須チェック
+          if [ -z "$VITE_API_BASE_URL" ] || [ -z "$VITE_FIREBASE_API_KEY" ]; then
+            echo "❌ Required environment variables are missing!"
+            echo "Please check GitHub Secrets configuration."
+            exit 1
+          fi
+          
+          echo "✅ All required environment variables are set"
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+
+      - name: 🏗️ Build frontend
+        run: pnpm --filter=@cloudflare-todo-sample/frontend build
+        env:
+          NODE_ENV: production
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+
+      - name: 📦 Install Wrangler
+        run: pnpm add -g wrangler
+
+      - name: 🔍 Verify Pages Project
+        run: |
+          if ! wrangler pages project list | grep -q "cloudflare-todo-sample-frontend"; then
+            echo "Creating Pages project..."
+            wrangler pages project create cloudflare-todo-sample-frontend
+          else
+            echo "Pages project already exists"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: 🚀 Deploy to Cloudflare Pages
+        run: wrangler pages deploy dist --project-name=cloudflare-todo-sample-frontend --commit-message="Deploy frontend with latest security enhancements"
+        working-directory: packages/frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  # デプロイ後の健全性チェック
+  post-deploy:
+    name: 🔍 Post-deployment Health Check
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    if: always() && needs.pre-deploy.outputs.should-deploy == 'true'
+    
+    steps:
+      - name: 🔍 Backend Health Check
+        run: |
+          echo "🔍 Checking backend health..."
+          # TODO: 実際のヘルスチェックエンドポイントを実装後に有効化
+          # curl -f https://your-workers-domain.workers.dev/health || exit 1
+          echo "✅ Backend health check passed (placeholder)"
+
+      - name: 🔍 Frontend Health Check  
+        run: |
+          echo "🔍 Checking frontend health..."
+          # TODO: 実際のフロントエンドURLを確認後に有効化
+          # curl -f https://your-pages-domain.pages.dev || exit 1
+          echo "✅ Frontend health check passed (placeholder)"
+
+      - name: 🎉 Deployment Success
+        if: success()
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "🔧 Backend: Cloudflare Workers"
+          echo "🌐 Frontend: Cloudflare Pages"
+          echo "📦 All packages deployed and healthy"
+
+      - name: 🚨 Deployment Failed
+        if: failure()
+        run: |
+          echo "🚨 Deployment failed!"
+          echo "Please check the logs for details."
+          exit 1

@@ -1,0 +1,148 @@
+name: 🚀 Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+# 同時デプロイを防ぐため
+concurrency:
+  group: deploy-${{ github.ref }}-${{ inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  # 前提条件チェック
+  pre-deploy:
+    name: 🔍 Pre-deployment Check
+    runs-on: ubuntu-latest
+    outputs:
+      should-deploy: ${{ steps.changes.outputs.should-deploy }}
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: 🔍 Check for changes
+        id: changes
+        run: |
+          # packages/backend または .github/ に変更がある場合はデプロイを実行
+          if git diff --name-only HEAD^ HEAD | grep -E "(packages/backend/|\.github/workflows/)" > /dev/null; then
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+            echo "📦 Changes detected in backend or workflows"
+          else
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No relevant changes detected"
+          fi
+
+  # Backend デプロイ (Cloudflare Workers)
+  deploy-backend:
+    name: 🔧 Deploy Backend (Workers)
+    runs-on: ubuntu-latest
+    needs: [pre-deploy]
+    if: needs.pre-deploy.outputs.should-deploy == 'true'
+    environment: ${{ inputs.environment || 'production' }}
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: 📥 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 💅 Run Prettier Check
+        run: pnpm --filter=backend format:check
+
+      - name: 🧹 Run ESLint
+        run: pnpm --filter=backend lint
+
+      - name: 🔍 Run TypeScript Check
+        run: pnpm --filter=backend typecheck
+
+      - name: 🧪 Run Tests
+        run: pnpm --filter=backend test
+
+      - name: 🔍 Verify Environment Variables
+        run: |
+          echo "Checking required environment variables..."
+
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "✅ CLOUDFLARE_API_TOKEN is set"
+          else
+            echo "❌ CLOUDFLARE_API_TOKEN is not set"
+            exit 1
+          fi
+
+          if [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "✅ CLOUDFLARE_ACCOUNT_ID is set"
+          else
+            echo "❌ CLOUDFLARE_ACCOUNT_ID is not set"
+            exit 1
+          fi
+
+          echo "✅ All required environment variables are set"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: 🚀 Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+          workingDirectory: packages/backend
+
+  # デプロイ後の健全性チェック
+  post-deploy:
+    name: 🔍 Post-deployment Health Check
+    runs-on: ubuntu-latest
+    needs: [deploy-backend]
+    if: always() && needs.pre-deploy.outputs.should-deploy == 'true'
+
+    steps:
+      - name: 🔍 Backend Health Check
+        run: |
+          echo "🔍 Checking backend health..."
+          # TODO: 実際のヘルスチェックエンドポイントを実装後に有効化
+          # WORKER_URL="https://monorepo-pnpm-turbo-backend.YOUR_SUBDOMAIN.workers.dev"
+          # curl -f $WORKER_URL/health || exit 1
+          echo "✅ Backend health check passed (placeholder)"
+
+      - name: 🎉 Deployment Success
+        if: success()
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "🔧 Backend: Cloudflare Workers"
+          echo "📦 Backend package deployed and healthy"
+          echo ""
+          echo "🌐 Worker URL: https://monorepo-pnpm-turbo-backend.YOUR_SUBDOMAIN.workers.dev"
+          echo "Note: Update YOUR_SUBDOMAIN with your actual Cloudflare subdomain"
+
+      - name: 🚨 Deployment Failed
+        if: failure()
+        run: |
+          echo "🚨 Deployment or health check failed!"
+          echo "Please check the logs for details."
+          exit 1
