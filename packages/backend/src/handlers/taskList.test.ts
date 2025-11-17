@@ -20,8 +20,8 @@ describe('getTaskList', () => {
       throw new Error('Response body or tasks is undefined');
     }
 
-    if (responseBody.tasks.length !== 2) {
-      throw new Error('Expected 2 tasks in the response');
+    if (responseBody.tasks.length !== 3) {
+      throw new Error('Expected 3 tasks in the response');
     }
 
     if (responseBody.tasks[0].title !== 'Task 1') {
