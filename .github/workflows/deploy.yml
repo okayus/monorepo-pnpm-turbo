@@ -111,6 +111,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
           workingDirectory: packages/backend
+          packageManager: pnpm
 
   # Frontend デプロイ (Cloudflare Pages)
   deploy-frontend:
@@ -160,6 +161,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=monorepo-pnpm-turbo-frontend
           workingDirectory: packages/frontend
+          packageManager: pnpm
 
   # デプロイ後の健全性チェック
   post-deploy:
