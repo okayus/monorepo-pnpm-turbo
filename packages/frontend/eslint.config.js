@@ -6,7 +6,7 @@ import reactHooksPlugin from 'eslint-plugin-react-hooks';
 
 export default [
   {
-    ignores: ['node_modules/**', 'dist/**', 'eslint.config.js'],
+    ignores: ['node_modules/**', 'dist/**', 'eslint.config.js', '*.config.ts'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
