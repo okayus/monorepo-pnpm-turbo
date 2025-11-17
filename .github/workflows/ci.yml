@@ -12,10 +12,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Backend のコード品質チェック
+  # コード品質チェック（Backend & Frontend）
   quality-check:
-    name: 🧹 Backend Quality Check
+    name: 🧹 Quality Check (${{ matrix.package }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [backend, frontend]
 
     steps:
       - name: 📥 Checkout code
@@ -34,19 +38,19 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: 💅 Run Prettier Check
-        run: pnpm --filter=backend format:check
+        run: pnpm --filter=${{ matrix.package }} format:check
         continue-on-error: false
 
       - name: 🧹 Run ESLint
-        run: pnpm --filter=backend lint
+        run: pnpm --filter=${{ matrix.package }} lint
         continue-on-error: false
 
       - name: 🔍 Run TypeScript Check
-        run: pnpm --filter=backend typecheck
+        run: pnpm --filter=${{ matrix.package }} typecheck
         continue-on-error: false
 
       - name: 🧪 Run Tests
-        run: pnpm --filter=backend test
+        run: pnpm --filter=${{ matrix.package }} test
         continue-on-error: false
 
   # Wrangler統合チェック
@@ -87,10 +91,17 @@ jobs:
             exit 1
           fi
 
+      # Frontend Build Test
+      - name: 🏗️ Frontend Build Test
+        run: |
+          cd packages/frontend
+          pnpm build
+          echo "✅ Frontend build successful!"
+
       - name: 🏗️ Build Check
         run: |
           echo "✅ All quality checks passed!"
-          echo "📦 Package: backend"
+          echo "📦 Packages: backend, frontend"
           echo "🎯 Ready for deployment pipeline!"
 
   # CI成功通知
