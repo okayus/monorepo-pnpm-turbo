@@ -10,6 +10,16 @@
   "observability": {
     "enabled": true,
   },
+
+  // D1データベースバインディング
+  "d1_databases": [
+    {
+      "binding": "DB", // コード内で使う名前
+      "database_name": "sampletasks", // データベース名
+      "database_id": "1510fafb-b8c1-4365-bc8a-07f7e1fdc0a6", // 本番DBのID
+      "migrations_dir": "drizzle", // マイグレーションディレクトリ
+    },
+  ],
   /**
    * Smart Placement
    * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
