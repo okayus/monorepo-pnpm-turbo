@@ -1,5 +1,7 @@
-import { Hono } from 'hono';
+import { Context, Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { createDB } from './db';
+import { getTaskList } from './handlers/taskList';
 
 const app = new Hono();
 
@@ -23,6 +25,9 @@ app.get('/', (c) => {
   return c.json({ message: 'Hello, World!' });
 });
 
-console.log('Server is running');
+app.get('/api/tasks', async (c: Context<{ Bindings: Env }>) => {
+  const db = createDB(c.env.DB);
+  return getTaskList(db, c);
+});
 
 export default app;

@@ -10,17 +10,21 @@ function App() {
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/`)
-      .then((res) => res.json())
-      .then((data) => {
-        setMessage(data.message);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message);
-        setLoading(false);
-      });
+    fetchTasks();
   }, []);
+
+  const fetchTasks = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_BASE_URL}/api/tasks`);
+      const data = await response.json();
+      setMessage(`Fetched ${data.tasks.length} tasks from backend.`);
+    } catch (err) {
+      setError(`Failed to fetch tasks from backend.\n${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div style={{ padding: '2rem', fontFamily: 'system-ui' }}>
