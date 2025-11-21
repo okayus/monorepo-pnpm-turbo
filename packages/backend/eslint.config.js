@@ -4,7 +4,13 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default [
   {
-    ignores: ['node_modules/**', 'dist/**', '.wrangler/**', 'eslint.config.js'],
+    ignores: [
+      'node_modules/**',
+      'dist/**',
+      '.wrangler/**',
+      'eslint.config.js',
+      'drizzle.config.ts',
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

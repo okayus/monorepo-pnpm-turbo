@@ -402,14 +402,16 @@ pnpm dev
 - `migrations_dir`: Drizzle Kitが生成するマイグレーションディレクトリを指定（`drizzle`）
   - この設定がないと、Wranglerはデフォルトで `migrations` ディレクトリを探してエラーになります
 
-### 4. 型定義の自動生成
+### 4. 型定義の自動生成（重要！）
+
+**この手順は必須です**。型定義がないと、`c.env.DB` にアクセスしようとしたときにTypeScriptエラーが発生します。
 
 Wranglerは `wrangler.jsonc` の設定から自動的に型定義を生成できます：
 
 ```bash
 cd packages/backend
 
-# 型定義を自動生成
+# 型定義を自動生成（必須！）
 npx wrangler types
 
 # または package.json のスクリプトを使用
@@ -425,7 +427,13 @@ interface Env {
 }
 ```
 
-**重要**: このファイルは自動生成されるため、手動で編集しないでください。`wrangler.jsonc` を変更したら、再度 `pnpm types:generate` を実行してください。
+**生成されるファイルサイズ**: 約350KB（Cloudflare Workersの全API型定義を含む）
+
+**重要なポイント**:
+- ✅ このファイルは自動生成されるため、手動で編集しないでください
+- ✅ `wrangler.jsonc` を変更したら、必ず再度 `pnpm types:generate` を実行
+- ✅ このファイルがないと `c.env.DB` の型が認識されず、コンパイルエラーになります
+- ✅ `.gitignore` に含めるかどうかは任意（通常は含めない方が良い）
 
 ### 5. マイグレーションファイルの生成
 
@@ -634,6 +642,10 @@ export type DB = ReturnType<typeof createDB>;
 
 ### 2. Hono + D1 の型定義
 
+Context型を指定する方法は2つあります。
+
+#### 方法1: アプリ全体に型を指定（推奨）
+
 `packages/backend/src/index.ts`:
 
 ```typescript
@@ -670,17 +682,62 @@ app.get('/', (c) => {
 // タスク一覧取得
 app.get('/api/tasks', async (c) => {
   const db = createDB(c.env.DB);
-  return getTasks(c, db);
+  return getTasks(db, c);  // 引数順序: (db, c)
 });
 
 // タスク作成
 app.post('/api/tasks', async (c) => {
   const db = createDB(c.env.DB);
-  return createTask(c, db);
+  return createTask(db, c);  // 引数順序: (db, c)
+});
+
+// タスク更新
+app.put('/api/tasks/:id', async (c) => {
+  const db = createDB(c.env.DB);
+  return updateTask(db, c);
+});
+
+// タスク削除
+app.delete('/api/tasks/:id', async (c) => {
+  const db = createDB(c.env.DB);
+  return deleteTask(db, c);
 });
 
 export default app;
 ```
+
+**メリット**: 全てのルートで自動的に型が適用される、コードがシンプル
+
+#### 方法2: 個別ハンドラーで型を指定
+
+```typescript
+import { Context, Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { createDB } from './db';
+import { getTaskList } from './handlers/taskList';
+
+const app = new Hono();
+
+// CORS設定
+app.use('/*', cors({ /* ... */ }));
+
+// ヘルスチェック
+app.get('/', (c) => {
+  return c.json({ message: 'Hello, World!' });
+});
+
+// タスク一覧取得（Context型を個別に指定）
+app.get('/api/tasks', async (c: Context<{ Bindings: Env }>) => {
+  const db = createDB(c.env.DB);
+  return getTaskList(db, c);
+});
+
+export default app;
+```
+
+**メリット**: 必要なルートだけに型を適用できる
+
+**推奨**: 方法1（アプリ全体に型を指定）の方がシンプルで、型安全性が高いです。
 
 ### 3. APIハンドラーの実装
 
@@ -697,7 +754,10 @@ import { eq, desc } from 'drizzle-orm';
  *
  * GET /api/tasks
  */
-export async function getTasks(c: Context, db: DB) {
+export async function getTasks(
+  db: DB,
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
   try {
     // Drizzle ORMでタスクを取得（作成日時の降順）
     const allTasks = await db
@@ -726,22 +786,18 @@ export async function getTasks(c: Context, db: DB) {
  * タスクを作成
  *
  * POST /api/tasks
- * Body: { title: string, description?: string }
+ * Body: { title: string, description?: string, userId?: number }
  */
-export async function createTask(c: Context, db: DB) {
+export async function createTask(
+  db: DB,
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
   try {
-    // リクエストボディを取得
     const body = await c.req.json<NewTask>();
 
     // バリデーション
     if (!body.title || body.title.trim() === '') {
-      return c.json(
-        {
-          success: false,
-          error: 'Title is required',
-        },
-        400
-      );
+      return c.json({ success: false, error: 'Title is required' }, 400);
     }
 
     // タスクを挿入
@@ -751,25 +807,14 @@ export async function createTask(c: Context, db: DB) {
         title: body.title,
         description: body.description || null,
         completed: body.completed || false,
+        userId: body.userId, // リレーションがある場合は必須
       })
       .returning();
 
-    return c.json(
-      {
-        success: true,
-        task: newTask[0],
-      },
-      201
-    );
+    return c.json({ success: true, task: newTask[0] }, 201);
   } catch (error) {
     console.error('Error creating task:', error);
-    return c.json(
-      {
-        success: false,
-        error: 'Failed to create task',
-      },
-      500
-    );
+    return c.json({ success: false, error: 'Failed to create task' }, 500);
   }
 }
 
@@ -778,43 +823,28 @@ export async function createTask(c: Context, db: DB) {
  *
  * PUT /api/tasks/:id
  */
-export async function updateTask(c: Context, db: DB) {
+export async function updateTask(
+  db: DB,
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
   try {
     const id = parseInt(c.req.param('id'));
     const body = await c.req.json<Partial<NewTask>>();
 
     const updatedTask = await db
       .update(tasks)
-      .set({
-        ...body,
-        updatedAt: new Date().toISOString(),
-      })
+      .set({ ...body, updatedAt: new Date().toISOString() })
       .where(eq(tasks.id, id))
       .returning();
 
     if (updatedTask.length === 0) {
-      return c.json(
-        {
-          success: false,
-          error: 'Task not found',
-        },
-        404
-      );
+      return c.json({ success: false, error: 'Task not found' }, 404);
     }
 
-    return c.json({
-      success: true,
-      task: updatedTask[0],
-    });
+    return c.json({ success: true, task: updatedTask[0] });
   } catch (error) {
     console.error('Error updating task:', error);
-    return c.json(
-      {
-        success: false,
-        error: 'Failed to update task',
-      },
-      500
-    );
+    return c.json({ success: false, error: 'Failed to update task' }, 500);
   }
 }
 
@@ -823,7 +853,10 @@ export async function updateTask(c: Context, db: DB) {
  *
  * DELETE /api/tasks/:id
  */
-export async function deleteTask(c: Context, db: DB) {
+export async function deleteTask(
+  db: DB,
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
   try {
     const id = parseInt(c.req.param('id'));
 
@@ -833,31 +866,22 @@ export async function deleteTask(c: Context, db: DB) {
       .returning();
 
     if (deletedTask.length === 0) {
-      return c.json(
-        {
-          success: false,
-          error: 'Task not found',
-        },
-        404
-      );
+      return c.json({ success: false, error: 'Task not found' }, 404);
     }
 
-    return c.json({
-      success: true,
-      message: 'Task deleted successfully',
-    });
+    return c.json({ success: true, message: 'Task deleted successfully' });
   } catch (error) {
     console.error('Error deleting task:', error);
-    return c.json(
-      {
-        success: false,
-        error: 'Failed to delete task',
-      },
-      500
-    );
+    return c.json({ success: false, error: 'Failed to delete task' }, 500);
   }
 }
 ```
+
+**重要な変更点**:
+- ✅ 関数の引数順序: `(db, c)` に統一（dbが先）
+- ✅ 戻り値の型: `Promise<Response>` を明示
+- ✅ Context型: `Context<{ Bindings: Env }>` を明示
+- ✅ エラーハンドリング: シンプルに改善
 
 ### 4. 開発サーバーで確認
 
@@ -875,8 +899,367 @@ curl http://localhost:8787/api/tasks
 # タスク作成
 curl -X POST http://localhost:8787/api/tasks \
   -H "Content-Type: application/json" \
-  -d '{"title": "New Task", "description": "Task description"}'
+  -d '{"title": "New Task", "description": "Task description", "userId": 1}'
 ```
+
+---
+
+## フロントエンドとの統合
+
+バックエンドAPIができたので、フロントエンドから接続して動作確認します。
+
+### 1. フロントエンドの環境変数設定
+
+開発環境では、バックエンドは `http://localhost:8787` で動作します。
+
+**`.env.local` ファイルを作成**:
+
+```bash
+cd packages/frontend
+
+# .env.exampleをコピー
+cp .env.example .env.local
+```
+
+**`.env.local` を編集**:
+
+```env
+# 開発環境（ローカルバックエンド）
+VITE_API_BASE_URL=http://localhost:8787
+
+# 本番環境の場合は以下（デプロイ時に上書き）
+# VITE_API_BASE_URL=https://monorepo-pnpm-turbo-backend.toshiaki-mukai-9981.workers.dev
+```
+
+**重要**: `.env.local` は `.gitignore` に含まれているため、コミットされません。
+
+### 2. 両方のサーバーを起動
+
+**ターミナル1（バックエンド）**:
+
+```bash
+cd packages/backend
+pnpm dev
+```
+
+出力:
+```
+⛅️ wrangler 4.47.0
+Your worker has access to the following bindings:
+- D1 Databases:
+  - DB: sampletasks (1510fafb-b8c1-4365-bc8a-07f7e1fdc0a6)
+⎔ Starting local server...
+[wrangler:inf] Ready on http://localhost:8787
+```
+
+**ターミナル2（フロントエンド）**:
+
+```bash
+cd packages/frontend
+pnpm dev
+```
+
+出力:
+```
+VITE v6.x.x  ready in xxx ms
+
+➜  Local:   http://localhost:5173/
+```
+
+**または、ルートディレクトリから両方を同時起動**:
+
+```bash
+# プロジェクトルートで
+pnpm --filter=backend dev &
+pnpm --filter=frontend dev
+```
+
+### 3. フロントエンドからAPIを呼び出す
+
+**`packages/frontend/src/App.tsx` の例**:
+
+```tsx
+import { useEffect, useState } from 'react';
+
+interface Task {
+  id: number;
+  userId: number;
+  title: string;
+  description: string | null;
+  completed: boolean;
+  createdAt: string;
+}
+
+function App() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // 環境変数からAPI URLを取得
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ||
+    'https://monorepo-pnpm-turbo-backend.toshiaki-mukai-9981.workers.dev';
+
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  const fetchTasks = async () => {
+    try {
+      setLoading(true);
+      console.log('Fetching from:', `${API_BASE_URL}/api/tasks`);
+
+      const response = await fetch(`${API_BASE_URL}/api/tasks`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Tasks received:', data);
+
+      setTasks(data.tasks || []);
+      setError(null);
+    } catch (err) {
+      console.error('Error fetching tasks:', err);
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) return <div>Loading tasks...</div>;
+  if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
+
+  return (
+    <div>
+      <h1>Task List</h1>
+      <p>API URL: {API_BASE_URL}</p>
+
+      <ul>
+        {tasks.length === 0 ? (
+          <li>No tasks found</li>
+        ) : (
+          tasks.map((task) => (
+            <li key={task.id}>
+              <strong>{task.title}</strong>
+              {task.description && <p>{task.description}</p>}
+              <small>Status: {task.completed ? '✅ Done' : '⏳ Pending'}</small>
+            </li>
+          ))
+        )}
+      </ul>
+
+      <button onClick={fetchTasks}>Refresh</button>
+    </div>
+  );
+}
+
+export default App;
+```
+
+### 4. API疎通確認
+
+**ブラウザで確認**:
+
+1. http://localhost:5173 を開く
+2. **DevTools** を開く（F12）
+3. **Network** タブを確認
+4. `api/tasks` へのリクエストが表示される
+
+**正常な場合**:
+
+```
+Status: 200 OK
+Request URL: http://localhost:8787/api/tasks
+Response:
+{
+  "success": true,
+  "tasks": [
+    {
+      "id": 1,
+      "userId": 1,
+      "title": "Buy groceries",
+      "description": "Milk, eggs, bread",
+      "completed": 0,
+      "createdAt": "2025-11-19 00:42:54"
+    }
+  ]
+}
+```
+
+**Console で確認**:
+
+```
+Fetching from: http://localhost:8787/api/tasks
+Tasks received: { success: true, tasks: [...] }
+```
+
+### 5. 環境別のエンドポイント設定
+
+| 環境 | バックエンドURL | 設定方法 |
+|------|----------------|----------|
+| **ローカル開発** | `http://localhost:8787` | `.env.local` |
+| **本番環境** | `https://xxx.workers.dev` | GitHub Actions / Cloudflare Pages 環境変数 |
+
+**GitHub Actionsでの設定** (`.github/workflows/deploy.yml`):
+
+```yaml
+- name: 🏗️ Build Frontend
+  run: pnpm --filter=frontend build
+  env:
+    VITE_API_BASE_URL: https://monorepo-pnpm-turbo-backend.toshiaki-mukai-9981.workers.dev
+```
+
+### 6. トラブルシューティング
+
+#### エラー 1: CORSエラー
+
+**症状**:
+```
+Access to fetch at 'http://localhost:8787/api/tasks' from origin 'http://localhost:5173'
+has been blocked by CORS policy
+```
+
+**原因**: バックエンドのCORS設定に `http://localhost:5173` が含まれていない
+
+**解決策**:
+
+`packages/backend/src/index.ts` を確認：
+
+```typescript
+app.use(
+  '/*',
+  cors({
+    origin: [
+      'http://localhost:5173',  // ← これが必要
+      'https://monorepo-pnpm-turbo-frontend.pages.dev',
+    ],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+  })
+);
+```
+
+変更後、バックエンドを再起動：
+
+```bash
+# Ctrl+C で停止してから
+pnpm dev
+```
+
+---
+
+#### エラー 2: APIに接続できない
+
+**症状**:
+```
+Error: Failed to fetch
+```
+
+**確認事項**:
+
+1. **バックエンドが起動しているか**
+
+```bash
+# 別ターミナルで
+curl http://localhost:8787/api/tasks
+
+# 応答があればOK
+```
+
+2. **環境変数が正しいか**
+
+```bash
+# フロントエンドディレクトリで
+cat .env.local
+
+# VITE_API_BASE_URL=http://localhost:8787 を確認
+```
+
+3. **フロントエンドを再起動**
+
+環境変数を変更した場合、フロントエンドを再起動する必要があります：
+
+```bash
+# Ctrl+C で停止してから
+pnpm dev
+```
+
+---
+
+#### エラー 3: データが空
+
+**症状**: APIは成功するが `tasks: []`
+
+**原因**: データベースにデータが入っていない
+
+**解決策**:
+
+```bash
+# バックエンドディレクトリで
+wrangler d1 execute sampletasks --local --command "SELECT * FROM tasks"
+
+# データがない場合は挿入
+wrangler d1 execute sampletasks --local --command "
+  INSERT INTO users (name, email) VALUES ('Test User', 'test@example.com')
+"
+
+wrangler d1 execute sampletasks --local --command "
+  INSERT INTO tasks (user_id, title, description, completed)
+  VALUES (1, 'Buy groceries', 'Milk, eggs, bread', false)
+"
+```
+
+---
+
+#### エラー 4: 環境変数が undefined
+
+**症状**: `import.meta.env.VITE_API_BASE_URL` が `undefined`
+
+**原因**:
+- `.env.local` ファイルがない
+- 環境変数名が `VITE_` で始まっていない
+- フロントエンドを再起動していない
+
+**解決策**:
+
+1. `.env.local` を確認：
+
+```bash
+cd packages/frontend
+cat .env.local
+
+# 以下が含まれているか確認
+# VITE_API_BASE_URL=http://localhost:8787
+```
+
+2. フロントエンドを再起動：
+
+```bash
+# Ctrl+C で停止
+pnpm dev
+```
+
+3. ブラウザのConsoleで確認：
+
+```javascript
+console.log(import.meta.env.VITE_API_BASE_URL)
+// 出力: http://localhost:8787
+```
+
+---
+
+### 7. 疎通確認チェックリスト
+
+- [ ] バックエンド起動（`http://localhost:8787`）
+- [ ] フロントエンド起動（`http://localhost:5173`）
+- [ ] `.env.local` に `VITE_API_BASE_URL=http://localhost:8787` 設定
+- [ ] バックエンドのCORS設定に `http://localhost:5173` 追加
+- [ ] ブラウザで http://localhost:5173 を開く
+- [ ] DevTools Network タブで API リクエスト確認
+- [ ] データが正しく表示される
+- [ ] Console にエラーがない
 
 ---
 
@@ -1449,15 +1832,17 @@ describe('getTasks', () => {
 #### 初期セットアップ
 
 - [ ] パッケージインストール（`drizzle-orm`, `drizzle-kit`, `@cloudflare/workers-types`）
+- [ ] package.jsonにスクリプト追加（`types:generate`, `db:generate`, etc.）
 - [ ] `drizzle.config.ts` 作成
 - [ ] スキーマ定義（`src/db/schema.ts`）
   - [ ] シンプルなスキーマ or リレーションを含むスキーマを選択
-  - [ ] 必要なフィールドを定義（`description` など）
+  - [ ] 必要なフィールドを定義（`description`, `userId` など）
 - [ ] 本番D1データベース作成（`wrangler d1 create DB`）
 - [ ] `wrangler.jsonc` にバインディング追加
   - [ ] `database_id` を設定
   - [ ] `migrations_dir: "drizzle"` を設定
-- [ ] 型定義自動生成（`pnpm types:generate`）
+- [ ] **型定義自動生成（`pnpm types:generate`）← 重要！**
+  - [ ] `worker-configuration.d.ts` が生成されることを確認
 - [ ] マイグレーション生成（`pnpm db:generate`）
 - [ ] マイグレーション適用（`pnpm db:migrate:local`）
 - [ ] テーブル構造確認（`PRAGMA table_info`）
