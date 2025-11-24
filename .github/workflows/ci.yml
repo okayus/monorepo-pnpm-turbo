@@ -45,6 +45,11 @@ jobs:
         run: pnpm --filter=${{ matrix.package }} lint
         continue-on-error: false
 
+      - name: 🏗️ Build Backend (for Frontend typecheck)
+        if: matrix.package == 'frontend'
+        run: pnpm --filter=backend build
+        continue-on-error: false
+
       - name: 🔍 Run TypeScript Check
         run: pnpm --filter=${{ matrix.package }} typecheck
         continue-on-error: false
