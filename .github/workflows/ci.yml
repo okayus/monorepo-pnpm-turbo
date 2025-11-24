@@ -46,12 +46,11 @@ jobs:
         continue-on-error: false
 
       - name: 🔨 Generate Wrangler Types
-        if: matrix.package == 'backend'
         run: pnpm --filter=backend types:generate
         continue-on-error: false
 
       - name: 🏗️ Build Backend (for typecheck)
-        run: pnpm --filter=backend build
+        run: pnpm --filter=backend exec tsc --build --force
         continue-on-error: false
 
       - name: 🔍 Run TypeScript Check
