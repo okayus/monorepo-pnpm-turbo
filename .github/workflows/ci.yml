@@ -50,8 +50,7 @@ jobs:
         run: pnpm --filter=backend types:generate
         continue-on-error: false
 
-      - name: 🏗️ Build Backend (for Frontend typecheck)
-        if: matrix.package == 'frontend'
+      - name: 🏗️ Build Backend (for typecheck)
         run: pnpm --filter=backend build
         continue-on-error: false
 
