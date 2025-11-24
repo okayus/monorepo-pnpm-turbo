@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { hc } from 'hono/client';
+import type { AppType } from '../../backend/src/index';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
@@ -16,7 +18,8 @@ function App() {
   const fetchTasks = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/api/tasks`);
+      const client = hc<AppType>(API_BASE_URL);
+      const response = await client.api.tasks.$get();
       const data = await response.json();
       setMessage(`Fetched ${data.tasks.length} tasks from backend.`);
     } catch (err) {

@@ -1,2 +1,5 @@
 .env
 .wrangler/
+dist/
+src/types/worker-configuration.d.ts
+tsconfig.tsbuildinfo
