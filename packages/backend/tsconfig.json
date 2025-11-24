@@ -19,6 +19,6 @@
     "declaration": true,
     "declarationMap": true
   },
-  "include": ["src/**/*", "worker-configuration.d.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", ".wrangler"]
 }
