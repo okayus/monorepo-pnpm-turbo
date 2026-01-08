@@ -1,54 +1,35 @@
-import { useState, useEffect } from 'react';
-import { hc } from 'hono/client';
-import type { AppType } from '../../backend/src/index';
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  'https://monorepo-pnpm-turbo-backend.toshiaki-mukai-9981.workers.dev';
+import { Suspense } from 'react';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { TaskList } from './components/TaskList';
 
 function App() {
-  const [message, setMessage] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
-
-  useEffect(() => {
-    fetchTasks();
-  }, []);
-
-  const fetchTasks = async () => {
-    try {
-      setLoading(true);
-      const client = hc<AppType>(API_BASE_URL);
-      const response = await client.api.tasks.$get();
-      const data = await response.json();
-      setMessage(`Fetched ${data.tasks.length} tasks from backend.`);
-    } catch (err) {
-      setError(`Failed to fetch tasks from backend.\n${err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div style={{ padding: '2rem', fontFamily: 'system-ui' }}>
-      <h1>🚀 Monorepo PNPM Turbo - Frontend</h1>
+      <h1>Monorepo PNPM Turbo - Frontend</h1>
       <div style={{ marginTop: '2rem' }}>
         <h2>Backend API Response:</h2>
-        {loading && <p>Loading...</p>}
-        {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-        {message && (
-          <p style={{ fontSize: '1.5rem', color: 'green' }}>{message}</p>
-        )}
+        <ErrorBoundary
+          fallback={(error, reset) => (
+            <div style={{ color: 'red' }}>
+              <p>Error: {error.message}</p>
+              <button onClick={reset}>Retry</button>
+            </div>
+          )}
+        >
+          <Suspense fallback={<p>Loading...</p>}>
+            <TaskList />
+          </Suspense>
+        </ErrorBoundary>
       </div>
       <div style={{ marginTop: '2rem' }}>
         <h3>Technologies:</h3>
         <ul>
-          <li>⚛️ React 18</li>
-          <li>⚡ Vite</li>
-          <li>📘 TypeScript</li>
-          <li>✅ Vitest</li>
-          <li>🎨 ESLint + Prettier</li>
-          <li>☁️ Cloudflare Pages</li>
+          <li>React 18</li>
+          <li>Vite</li>
+          <li>TypeScript</li>
+          <li>Vitest</li>
+          <li>ESLint + Prettier</li>
+          <li>Cloudflare Pages</li>
         </ul>
       </div>
     </div>
